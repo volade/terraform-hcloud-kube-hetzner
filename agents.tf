@@ -184,16 +184,32 @@ resource "hcloud_floating_ip" "agents" {
   delete_protection = var.enable_delete_protection.floating_ip
 }
 
-resource "hcloud_floating_ip_assignment" "agents" {
-  for_each = { for k, v in local.agent_nodes : k => v if coalesce(lookup(v, "floating_ip"), false) }
+data "hcloud_floating_ip" "existing" {
+  for_each = {
+    for k, v in local.agent_nodes :
+    k => v if contains(keys(v), "floating_ip_id")
+  }
 
-  floating_ip_id = hcloud_floating_ip.agents[each.key].id
+  id = each.value.floating_ip_id
+}
+
+resource "hcloud_floating_ip_assignment" "agents" {
+  for_each = {
+    for k, v in local.agent_nodes :
+    k => v if coalesce(lookup(v, "floating_ip"), false) || contains(keys(v), "floating_ip_id")
+  }
+
+  floating_ip_id = coalesce(
+    try(hcloud_floating_ip.agents[each.key].id, null),
+    try(data.hcloud_floating_ip.existing[each.key].id, null)
+  )
   server_id      = module.agents[each.key].id
 
   depends_on = [
     null_resource.agents
   ]
 }
+
 
 resource "null_resource" "configure_floating_ip" {
   for_each = { for k, v in local.agent_nodes : k => v if coalesce(lookup(v, "floating_ip"), false) }
